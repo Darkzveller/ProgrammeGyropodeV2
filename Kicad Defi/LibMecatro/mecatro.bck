@@ -1,0 +1,14 @@
+EESchema-DOCLIB  Version 2.0
+#
+$CMP MPU6050
+D Capteur accéléromètre gyromètre
+K Acc / Gyro
+F https://drive.google.com/drive/folders/10Sz3XafcpIZpqMBvJWfH-nXdlGFyXtDA
+$ENDCMP
+#
+$CMP TLE-5206-2
+D Hacheur 4Q
+F https://drive.google.com/drive/folders/1EYH1amVyQlhpxi9vuQ3kFtMN4W9kEv0V
+$ENDCMP
+#
+#End Doc Library

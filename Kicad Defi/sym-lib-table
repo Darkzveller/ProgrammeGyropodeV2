@@ -1,0 +1,7 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "SymbGamelGe2_v6")(type "KiCad")(uri "${KIPRJMOD}/LibGamelGe2_v6/SymbGamelGe2_v6.kicad_sym")(options "")(descr ""))
+  (lib (name "mecatro")(type "KiCad")(uri "${KIPRJMOD}/LibMecatro/mecatro.kicad_sym")(options "")(descr ""))
+  (lib (name "Mini_L298N")(type "KiCad")(uri "${KIPRJMOD}/LibMiniL298N/Mini_L298N.kicad_sym")(options "")(descr ""))
+  (lib (name "LibRelais")(type "KiCad")(uri "${KIPRJMOD}/LibRelais/LibRelais.kicad_sym")(options "")(descr ""))
+)
