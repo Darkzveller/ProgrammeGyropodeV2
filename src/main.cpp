@@ -23,7 +23,7 @@ sensors_event_t a, g, temp;
 // Pins des LED
 #define LED_VERTE 0
 #define LED_ROUGE 2
-int test_led = 0;
+int8_t test_led = 0;
 // Variables globales
 long double val_tick_gauche = 0;
 long double val_tick_droite = 0;
@@ -31,7 +31,7 @@ long double val_tick_droite = 0;
 // Mutex pour protéger le bus I²C
 SemaphoreHandle_t i2cMutex;
 
-#define time_wait_init 1000
+#define time_wait_init 10
 bool FlagCalcul = 0;
 float Te = 5;
 float Tau = 250;
@@ -67,7 +67,7 @@ void controle(void *parameters)
     val_tick_gauche = encodergauche.getCount();
     val_tick_droite = encoderdroite.getCount();
 
-    FlagCalcul = 1;
+    FlagCalcul = true;
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(Te));
 
     // Demander a M.CLAMAINS toute information complémentaire sur la ligne suivante
@@ -162,7 +162,7 @@ void setup()
   pinMode(LED_VERTE, OUTPUT);
   pinMode(LED_ROUGE, OUTPUT);
 
-  while (test_led < (10000 / time_wait_init))
+  while (test_led < (10))
   {
     digitalWrite(LED_VERTE, true);
     digitalWrite(LED_ROUGE, true);
@@ -212,7 +212,6 @@ void loop()
       lcd.printf("D %d", (int)val_tick_droite);
       xSemaphoreGive(i2cMutex); // Libérer le mutex
     }
-
-    FlagCalcul = 0;
+    FlagCalcul = false;
   }
 }
