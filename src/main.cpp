@@ -13,12 +13,31 @@ ESP32Encoder encoderdroite;
 
 // Déclaration des événements du MPU6050
 sensors_event_t a, g, temp;
+double angle = 0;
+double z = 0;
+double y = 0;
+double x = 0;
 
 // Pins des encodeurs
 #define PIN_A_ENCODEUR_GAUCHE 33
 #define PIN_B_ENCODEUR_GAUCHE 32
 #define PIN_A_ENCODEUR_DROITE 26
 #define PIN_B_ENCODEUR_DROITE 25
+// Pin des moteur
+int frequence = 19000;
+int resolution = 12;
+#define PIN_A_MOTEUR_GAUCHE 17
+#define PIN_B_MOTEUR_GAUCHE 16
+#define PIN_A_MOTEUR_DROITE 19
+#define PIN_B_MOTEUR_DROITE 18
+
+#define CANAL_MOTEUR_DROIT_1 1
+#define CANAL_MOTEUR_DROIT_2 2
+#define CANAL_MOTEUR_GAUCHE_3 3
+#define CANAL_MOTEUR_GAUCHE_4 4
+void init_moteur(bool activate);
+void moteur_gauche(int pwm);
+void moteur_droite(int pwm);
 
 // Pins des LED
 #define LED_VERTE 0
@@ -31,7 +50,7 @@ long double val_tick_droite = 0;
 // Mutex pour protéger le bus I²C
 SemaphoreHandle_t i2cMutex;
 
-#define time_wait_init 10
+#define time_wait_init_ms 100
 bool FlagCalcul = 0;
 float Te = 5;
 float Tau = 250;
@@ -48,10 +67,10 @@ void controle(void *parameters)
     { // Prendre le mutex
       mpu.getEvent(&a, &g, &temp);
       xSemaphoreGive(i2cMutex); // Libérer le mutex
-      float z = a.acceleration.z;
-      float y = a.acceleration.y;
-      float x = a.acceleration.x;
-      float angle = degrees(atan2(y, z));
+      z = a.acceleration.z;
+      y = a.acceleration.y;
+      x = a.acceleration.x;
+      angle = degrees(atan2(y, z));
 
       Serial.print(x);
       Serial.printf(" ");
@@ -60,6 +79,12 @@ void controle(void *parameters)
       Serial.print(z);
       Serial.printf(" ");
       Serial.print(angle);
+      Serial.printf(" ");
+      Serial.print((double)val_tick_gauche);
+      Serial.printf(" ");
+      Serial.print((double)val_tick_droite);
+      moteur_gauche((int)0);
+      moteur_droite((int)0);
       Serial.println();
     }
 
@@ -106,13 +131,13 @@ void setup()
     lcd.begin(16, 2);
     lcd.setRGB(127, 127, 0); // Couleur jaune pour l'initialisation
     lcd.print("Init LCD...");
-    delay(time_wait_init);
+    delay(time_wait_init_ms);
     xSemaphoreGive(i2cMutex); // Libérer le mutex après l'initialisation
   }
   lcd.clear();
   lcd.print("LCD OK");
   Serial.println("Écran LCD initialisé.");
-  delay(time_wait_init);
+  delay(time_wait_init_ms);
   // Initialisation du MPU6050
   if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE)
   {
@@ -138,7 +163,7 @@ void setup()
   lcd.print("MPU6050 OK");
   lcd.setCursor(0, 1);
   lcd.print("MPU6050 détecté !");
-  delay(time_wait_init);
+  delay(time_wait_init_ms);
   // Initialisation des encodeurs
 
   lcd.clear();
@@ -153,7 +178,7 @@ void setup()
   Serial.println("Encodeurs initialisés.");
   lcd.clear();
   lcd.print("Encodeurs OK");
-  delay(time_wait_init);
+  delay(time_wait_init_ms);
 
   Serial.println("LED init");
   lcd.clear();
@@ -167,23 +192,31 @@ void setup()
     digitalWrite(LED_VERTE, true);
     digitalWrite(LED_ROUGE, true);
     Serial.println("Allume");
-    delay(time_wait_init);
+    delay(time_wait_init_ms);
     digitalWrite(LED_VERTE, false);
     digitalWrite(LED_ROUGE, false);
     Serial.println("eteint");
-    delay(time_wait_init);
+    delay(time_wait_init_ms);
     test_led++;
   }
 
   lcd.clear();
   lcd.print("LED OK");
-  delay(time_wait_init);
+  delay(time_wait_init_ms);
 
+  lcd.clear();
+  lcd.print("Init Moteurs...");
+
+  init_moteur(true);
+  Serial.println("Moteurs initialisés.");
+  lcd.clear();
+  lcd.print("Moteur OK");
+  delay(time_wait_init_ms);
   // Finalisation
   lcd.clear();
   lcd.setRGB(0, 127, 0); // Couleur verte pour signaler la fin
   lcd.print("Init Terminee!");
-  delay(time_wait_init);
+  delay(time_wait_init_ms);
   xSemaphoreGive(i2cMutex);
 
   xTaskCreate(
@@ -214,4 +247,53 @@ void loop()
     }
     FlagCalcul = false;
   }
+}
+
+void init_moteur(bool activate)
+{
+  if (activate)
+  {
+    // Config Moteur
+    ledcSetup(CANAL_MOTEUR_DROIT_1, frequence, resolution);
+    ledcSetup(CANAL_MOTEUR_DROIT_2, frequence, resolution); // <--- MANQUANT
+    // Connexion entre les pins et les canaux
+    ledcAttachPin(PIN_A_MOTEUR_DROITE, CANAL_MOTEUR_DROIT_1);
+    ledcAttachPin(PIN_B_MOTEUR_DROITE, CANAL_MOTEUR_DROIT_2);
+
+    ledcSetup(CANAL_MOTEUR_GAUCHE_3, frequence, resolution);
+    ledcSetup(CANAL_MOTEUR_GAUCHE_4, frequence, resolution); // <--- MANQUANT
+
+    // Connexion entre les pins et les canaux
+    ledcAttachPin(PIN_A_MOTEUR_GAUCHE, CANAL_MOTEUR_GAUCHE_3);
+    ledcAttachPin(PIN_B_MOTEUR_GAUCHE, CANAL_MOTEUR_GAUCHE_4);
+    Serial.printf("canal 1 = %d ", ledcRead(CANAL_MOTEUR_DROIT_1));
+    Serial.printf("canal 2 = %d", ledcRead(CANAL_MOTEUR_DROIT_2));
+    Serial.printf("canal 3 = %d ", ledcRead(CANAL_MOTEUR_GAUCHE_3));
+    Serial.printf("canal 4 = %d \n", ledcRead(CANAL_MOTEUR_GAUCHE_4));
+  }
+}
+
+void moteur_droite(int pwm)
+{
+  pwm = constrain(pwm, 0, ((1 << resolution) - 1));
+  int reverse_pwm;
+  reverse_pwm = ((1 << resolution) - 1) - pwm;
+  ledcWrite(CANAL_MOTEUR_DROIT_1, pwm);
+  ledcWrite(CANAL_MOTEUR_DROIT_2, reverse_pwm);
+  Serial.printf(" pwmd %d ", pwm);
+  Serial.printf(" ");
+  Serial.print(reverse_pwm);
+  Serial.printf(" ");
+}
+void moteur_gauche(int pwm)
+{
+  pwm = constrain(pwm, 0, ((1 << resolution) - 1));
+  int reverse_pwm;
+  reverse_pwm = ((1 << resolution) - 1) - pwm;
+  ledcWrite(CANAL_MOTEUR_GAUCHE_3, reverse_pwm);
+  ledcWrite(CANAL_MOTEUR_GAUCHE_4, pwm);
+  Serial.printf("pwmg %d ", pwm);
+  Serial.printf(" ");
+  Serial.print(reverse_pwm);
+  Serial.printf(" ");
 }
