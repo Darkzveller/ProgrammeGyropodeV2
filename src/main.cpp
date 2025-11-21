@@ -42,6 +42,10 @@ int resolution = 12;
 #define CANAL_MOTEUR_DROIT_2 2
 #define CANAL_MOTEUR_GAUCHE_3 3
 #define CANAL_MOTEUR_GAUCHE_4 4
+double frottement_moteur = 0.20;
+double frottement_moteur_gauche = 0.0;
+double frottement_moteur_droite = 0.15;
+
 void init_moteur(bool activate);
 void moteur_gauche(int pwm);
 void moteur_droite(int pwm);
@@ -52,6 +56,7 @@ void moteur_droite(int pwm);
 int8_t test_led = 0;
 // Pin mesure batterie
 #define PIN_MESURE_TENSION 36
+#define PIN_INTERRUPTEUR_BATTERIE 27
 // esp_adc_cal_characteristics_t adc_chars; // allocation statique
 double mesure_bat(int pin, int nb_lectures = 50);
 
@@ -59,9 +64,27 @@ double mesure_bat(int pin, int nb_lectures = 50);
 SemaphoreHandle_t i2cMutex;
 
 #define time_wait_init_ms 100
+double A, B;
 bool FlagCalcul = 0;
 float Te = 5;
 float Tau = 250;
+double thetaG = 0;
+double thetaGF = 0;
+double thetaW = 0;
+double thetaWF = 0;
+double theta = 0;
+double erreur_pos_ang = 0;
+double cons = 0;
+double cons_equilibre = 0;
+double commande = 0;
+double commande_gauche = 0;
+double commande_droite = 0;
+
+double Kp_position = 19.6;
+double Kd_position = -0.83;
+double Ki_postion = 0;
+double somme_integral_postion = 0;
+double integral_limite_position = 0.25;
 void controle(void *parameters)
 {
   // Demander a M.CLAMAINS toute information complémentaire sur la ligne suivante
@@ -73,34 +96,95 @@ void controle(void *parameters)
     // Lecture des données MPU6050
     if (xSemaphoreTake(i2cMutex, portMAX_DELAY) == pdTRUE)
     { // Prendre le mutex
+      static bool one_pass = true;
+      if (one_pass)
+      {
+        for (int i = 0; i <= 1; i++)
+        {
+          delay(2000);
+        }
+        digitalWrite(PIN_INTERRUPTEUR_BATTERIE, HIGH);
+        one_pass = false;
+      }
       mpu.getEvent(&a, &g, &temp);
       xSemaphoreGive(i2cMutex); // Libérer le mutex
       z = a.acceleration.z;
       y = a.acceleration.y;
       x = a.acceleration.x;
       angle = degrees(atan2(y, z));
-      Serial.print(x);
-      Serial.printf(" ");
-      Serial.print(y);
-      Serial.printf(" ");
-      Serial.print(z);
-      Serial.printf(" ");
-      Serial.print(angle);
-      Serial.printf(" ");
-      Serial.print((double)val_tick_gauche);
-      Serial.printf(" ");
-      Serial.print((double)val_tick_droite);
-      Serial.printf(" ");
-      Serial.print((double)mesure_bat(PIN_MESURE_TENSION, 50));
 
-      Serial.println();
+      // Calcul de théta a l'aide de l'accélération mesurer
+      thetaG = atan2(y, z); // Permet de calculer l'angle Théta G avec un angle dans la valeur est entier relatif
+      // Calcul du Théta filtrer
+      thetaGF = A * thetaG + B * thetaGF;
+
+      // Calcul de théta a l'aide de la valeur mesurer par le gyroscope
+      thetaW = g.gyro.x * Tau * 1e-3;
+      // Calcul du thétaW filtrer
+      thetaWF = A * thetaW + B * thetaWF;
+
+      // Calcule de la somme permettant d'avoir un passe bande filtrer
+      theta = thetaGF + thetaWF;
+      erreur_pos_ang = (cons + cons_equilibre) - theta;
+      float proportionnel = erreur_pos_ang * Kp_position;
+      float derivee = Kd_position * 1 * g.gyro.x;
+
+      somme_integral_postion += erreur_pos_ang * Te;
+      if (somme_integral_postion > integral_limite_position)
+      {
+        somme_integral_postion = integral_limite_position;
+      }
+      else if (somme_integral_postion < -integral_limite_position)
+      {
+        somme_integral_postion = -integral_limite_position;
+      }
+
+      double integral = Ki_postion * somme_integral_postion;
+
+      commande = proportionnel + derivee + integral;
+
+      if (commande < 0)
+      {
+        // commande = commande - frottement_moteur;
+        commande_gauche = commande - frottement_moteur_gauche;
+        commande_droite = commande - frottement_moteur_droite;
+      }
+      else if (commande > 0)
+      {
+        // commande = commande + frottement_moteur;
+        commande_gauche = commande + frottement_moteur_gauche;
+        commande_droite = commande + frottement_moteur_droite;
+      }
+      commande_gauche = constrain(commande_gauche, -0.45, +0.45);
+      commande_droite = constrain(commande_droite, -0.45, +0.45);
+      commande_gauche = commande_gauche + 0.5;
+      commande_droite = commande_droite + 0.5;
+      float pwm_gauche = commande_gauche * ((1 << resolution) - 1);
+      float pwm_droite = commande_droite * ((1 << resolution) - 1);
+
+      moteur_gauche((int)pwm_gauche);
+      moteur_droite((int)pwm_droite);
+
+      // Serial.print(x);
+      // Serial.printf(" ");
+      // Serial.print(y);
+      // Serial.printf(" ");
+      // Serial.print(z);
+      // Serial.printf(" ");
+      // Serial.print(angle);
+      // Serial.printf(" ");
+      // Serial.print((double)val_tick_gauche);
+      // Serial.printf(" ");
+      // Serial.print((double)val_tick_droite);
+      // Serial.printf(" ");
+      // Serial.print((double)mesure_bat(PIN_MESURE_TENSION, 50));
     }
-    moteur_gauche((int)4095);
-    moteur_droite((int)4095);
+    // moteur_gauche((int)4095);
+    // moteur_droite((int)4095);
 
-    // Lecture des ticks des encodeurs
-    val_tick_gauche = encodergauche.getCount();
-    val_tick_droite = encoderdroite.getCount();
+    // // Lecture des ticks des encodeurs
+    // val_tick_gauche = encodergauche.getCount();
+    // val_tick_droite = encoderdroite.getCount();
 
     FlagCalcul = true;
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(Te));
@@ -227,6 +311,8 @@ void setup()
   lcd.print("Init Mesure tension...");
   pinMode(PIN_MESURE_TENSION, INPUT);
   analogReadResolution(12);
+  pinMode(PIN_INTERRUPTEUR_BATTERIE, OUTPUT);
+  digitalWrite(PIN_INTERRUPTEUR_BATTERIE, LOW);
 
   Serial.println("Mesure tension initialisés.");
   lcd.clear();
@@ -248,6 +334,9 @@ void setup()
       1,          // tres haut niveau de priorite
       NULL        // descripteur
   );
+  // ! Calcul des coefficents du filtre sans développement des expressions de la fonction de transfert
+  A = 1 / (1 + Tau / Te);
+  B = A * (Tau / Te);
 
   Serial.println("Initialisation terminée.");
 }
@@ -265,6 +354,14 @@ void loop()
       lcd.setCursor(0, 1);
       lcd.printf("D %d", (int)val_tick_droite);
       xSemaphoreGive(i2cMutex); // Libérer le mutex
+      Serial.print(erreur_pos_ang);
+      Serial.printf(" ");
+      Serial.print(commande);
+      Serial.printf(" ");
+      Serial.print(commande_droite);
+      Serial.printf(" ");
+      Serial.print(commande_gauche);
+      Serial.println();
     }
     FlagCalcul = false;
   }
@@ -299,8 +396,8 @@ void moteur_droite(int pwm)
   pwm = constrain(pwm, 0, ((1 << resolution) - 1));
   int reverse_pwm;
   reverse_pwm = ((1 << resolution) - 1) - pwm;
-  ledcWrite(CANAL_MOTEUR_DROIT_1, pwm);
-  ledcWrite(CANAL_MOTEUR_DROIT_2, reverse_pwm);
+  ledcWrite(CANAL_MOTEUR_DROIT_1, reverse_pwm);
+  ledcWrite(CANAL_MOTEUR_DROIT_2, pwm);
   // Serial.printf(" pwmd %d ", pwm);
   // Serial.printf(" ");
   // Serial.print(reverse_pwm);
@@ -311,8 +408,8 @@ void moteur_gauche(int pwm)
   pwm = constrain(pwm, 0, ((1 << resolution) - 1));
   int reverse_pwm;
   reverse_pwm = ((1 << resolution) - 1) - pwm;
-  ledcWrite(CANAL_MOTEUR_GAUCHE_3, reverse_pwm);
-  ledcWrite(CANAL_MOTEUR_GAUCHE_4, pwm);
+  ledcWrite(CANAL_MOTEUR_GAUCHE_3, pwm);
+  ledcWrite(CANAL_MOTEUR_GAUCHE_4, reverse_pwm);
   // Serial.printf("pwmg %d ", pwm);
   // Serial.printf(" ");
   // Serial.print(reverse_pwm);
@@ -334,4 +431,96 @@ double mesure_bat(int pin, int nb_lectures)
 
   double Vin = Vout * ((15000.0 + 5600.0) / 5600.0) * 1.05;
   return Vin;
+}
+
+void reception(char ch)
+{
+
+  static int i = 0;
+  static String chaine = "";
+  String commande;
+  String valeur;
+  int index, length;
+
+  if ((ch == 13) or (ch == 10))
+  {
+    index = chaine.indexOf(' ');
+    length = chaine.length();
+    if (index == -1)
+    {
+      commande = chaine;
+      valeur = "";
+    }
+    else
+    {
+      commande = chaine.substring(0, index);
+      valeur = chaine.substring(index + 1, length);
+    }
+
+    if (commande == "Tau")
+    {
+      Tau = valeur.toFloat();
+      // calcul coeff filtre
+      A = 1 / (1 + Tau / Te);
+      B = Tau / Te * A;
+    }
+    if (commande == "Te")
+    {
+      Te = valeur.toInt();
+    }
+    if (commande == "C")
+    {
+      Kp_position = valeur.toDouble();
+    }
+    if (commande == "Kd")
+    {
+      Kd_position = valeur.toDouble();
+    }
+    if (commande == "Ki")
+    {
+      Ki_postion = valeur.toDouble();
+    }
+
+    if (commande == "Fr_g")
+    {
+      frottement_moteur_gauche = valeur.toDouble();
+    }
+
+    if (commande == "Fr_d")
+    {
+      frottement_moteur_gauche = valeur.toDouble();
+    }
+
+    // if (commande == "consE")
+    // {
+    //   consE = valeur.toFloat();
+    //   // Serial.println(consE);
+    // }
+    // if (commande == "Kw")
+    // {
+    //   Kw = valeur.toFloat();
+    // }
+    // if (commande == "Kwd")
+    // {
+    //   Kwd = valeur.toFloat();
+    // }
+
+    // if (commande == "consVit")
+    // {
+    //   CONSv = valeur.toFloat();
+    // }
+    chaine = "";
+  }
+  else
+  {
+    chaine += ch;
+  }
+}
+
+void serialEvent()
+{
+  while (Serial.available() > 0) // tant qu'il y a des caractères à lire
+  {
+    reception(Serial.read());
+  }
 }
