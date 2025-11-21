@@ -2,6 +2,9 @@
 #include <ESP32Encoder.h>
 #include <Adafruit_MPU6050.h>
 #include "rgb_lcd.h"
+#include "esp_adc_cal.h"
+#include "driver/adc.h"
+
 // #define SCAN_I2C_ID
 
 // Déclaration des périphériques
@@ -23,6 +26,10 @@ double x = 0;
 #define PIN_B_ENCODEUR_GAUCHE 32
 #define PIN_A_ENCODEUR_DROITE 26
 #define PIN_B_ENCODEUR_DROITE 25
+// Variables globales encoder
+long double val_tick_gauche = 0;
+long double val_tick_droite = 0;
+
 // Pin des moteur
 int frequence = 19000;
 int resolution = 12;
@@ -43,9 +50,10 @@ void moteur_droite(int pwm);
 #define LED_VERTE 0
 #define LED_ROUGE 2
 int8_t test_led = 0;
-// Variables globales
-long double val_tick_gauche = 0;
-long double val_tick_droite = 0;
+// Pin mesure batterie
+#define PIN_MESURE_TENSION 36
+// esp_adc_cal_characteristics_t adc_chars; // allocation statique
+double mesure_bat(int pin, int nb_lectures = 50);
 
 // Mutex pour protéger le bus I²C
 SemaphoreHandle_t i2cMutex;
@@ -71,7 +79,6 @@ void controle(void *parameters)
       y = a.acceleration.y;
       x = a.acceleration.x;
       angle = degrees(atan2(y, z));
-
       Serial.print(x);
       Serial.printf(" ");
       Serial.print(y);
@@ -83,10 +90,13 @@ void controle(void *parameters)
       Serial.print((double)val_tick_gauche);
       Serial.printf(" ");
       Serial.print((double)val_tick_droite);
-      moteur_gauche((int)0);
-      moteur_droite((int)0);
+      Serial.printf(" ");
+      Serial.print((double)mesure_bat(PIN_MESURE_TENSION, 50));
+
       Serial.println();
     }
+    moteur_gauche((int)4095);
+    moteur_droite((int)4095);
 
     // Lecture des ticks des encodeurs
     val_tick_gauche = encodergauche.getCount();
@@ -212,6 +222,17 @@ void setup()
   lcd.clear();
   lcd.print("Moteur OK");
   delay(time_wait_init_ms);
+
+  lcd.clear();
+  lcd.print("Init Mesure tension...");
+  pinMode(PIN_MESURE_TENSION, INPUT);
+  analogReadResolution(12);
+
+  Serial.println("Mesure tension initialisés.");
+  lcd.clear();
+  lcd.print("Mesure bat OK");
+  delay(time_wait_init_ms);
+
   // Finalisation
   lcd.clear();
   lcd.setRGB(0, 127, 0); // Couleur verte pour signaler la fin
@@ -280,10 +301,10 @@ void moteur_droite(int pwm)
   reverse_pwm = ((1 << resolution) - 1) - pwm;
   ledcWrite(CANAL_MOTEUR_DROIT_1, pwm);
   ledcWrite(CANAL_MOTEUR_DROIT_2, reverse_pwm);
-  Serial.printf(" pwmd %d ", pwm);
-  Serial.printf(" ");
-  Serial.print(reverse_pwm);
-  Serial.printf(" ");
+  // Serial.printf(" pwmd %d ", pwm);
+  // Serial.printf(" ");
+  // Serial.print(reverse_pwm);
+  // Serial.printf(" ");
 }
 void moteur_gauche(int pwm)
 {
@@ -292,8 +313,25 @@ void moteur_gauche(int pwm)
   reverse_pwm = ((1 << resolution) - 1) - pwm;
   ledcWrite(CANAL_MOTEUR_GAUCHE_3, reverse_pwm);
   ledcWrite(CANAL_MOTEUR_GAUCHE_4, pwm);
-  Serial.printf("pwmg %d ", pwm);
-  Serial.printf(" ");
-  Serial.print(reverse_pwm);
-  Serial.printf(" ");
+  // Serial.printf("pwmg %d ", pwm);
+  // Serial.printf(" ");
+  // Serial.print(reverse_pwm);
+  // Serial.printf(" ");
+}
+
+double mesure_bat(int pin, int nb_lectures)
+{
+  int adcValue = analogRead(pin); // 0 à 4095
+  long somme = 0;                 // utiliser long pour éviter overflow
+  for (int i = 0; i < nb_lectures; i++)
+  {
+    somme += analogRead(pin); // additionner toutes les lectures
+    delayMicroseconds(50);    // petit délai pour stabilité
+  }
+
+  int adcMoyenne = somme / (int)nb_lectures;
+  double Vout = (adcMoyenne * 3.3) / 4095.0;
+
+  double Vin = Vout * ((15000.0 + 5600.0) / 5600.0) * 1.05;
+  return Vin;
 }
