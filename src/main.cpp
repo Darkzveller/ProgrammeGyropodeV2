@@ -26,6 +26,7 @@ double x = 0;
 #define PIN_B_ENCODEUR_GAUCHE 32
 #define PIN_A_ENCODEUR_DROITE 26
 #define PIN_B_ENCODEUR_DROITE 25
+#define TIC_UN_TOUR 752.0
 // Variables globales encoder
 long double val_tick_gauche = 0;
 long double val_tick_droite = 0;
@@ -68,23 +69,55 @@ double A, B;
 bool FlagCalcul = 0;
 float Te = 5;
 float Tau = 250;
+double Tau_vitesse = 333;        // pour que le syteme réagisse en quasi 1 seconde
+double tension_reference = 8.12; // V
+// Theta en position en angulaire
 double thetaG = 0;
 double thetaGF = 0;
 double thetaW = 0;
 double thetaWF = 0;
 double theta = 0;
+// Theta encodeur et vitesse en angulaire
+double distance_gauche_parcourue = 0;
+double distance_droite_parcourue = 0;
+
+double theta_encodeur_gauche = 0;
+double theta_encodeur_droite = 0;
+double theta_encodeur_moyenne = 0;
+double theta_encodeur_moyenne_prec = 0;
+
+double vitesse_angulaire = 0;
+double vitesse_angulaire_filtrer = 0;
+double vitesse_angulaire_filter_prec = 0;
+
+// Variable assservissement angulaire
 double erreur_pos_ang = 0;
-double cons = 0;
 double cons_equilibre = 0;
-double commande = 0;
+
+double commande_position_angulaire = 0;
+
 double commande_gauche = 0;
 double commande_droite = 0;
 
-double Kp_position = 19.6;
-double Kd_position = -0.83;
-double Ki_postion = 0;
+double Kp_position = 9.12;    // 19.6
+double Kd_position = -0.0285; //-0.83
+double Ki_postion = 0.177;    // 0
 double somme_integral_postion = 0;
-double integral_limite_position = 0.25;
+double integral_limite_position_angulaire = 0.25;
+
+// Variable assservissement vitesse
+double erreur_vit_angulaire = 0;
+double erreur_vit_angulaire_prec = 0;
+
+double cons_vitesse_angulaire = 0;
+double commande_vitesse_angulaire = 0;
+
+double Kp_vitesse = 0; //
+double Kd_vitesse = 0; //
+double Ki_vitesse = 0; // 0
+double somme_integral_vitesse = 0;
+double integral_limite_vitesse = 0.25;
+
 void controle(void *parameters)
 {
   // Demander a M.CLAMAINS toute information complémentaire sur la ligne suivante
@@ -106,13 +139,40 @@ void controle(void *parameters)
         digitalWrite(PIN_INTERRUPTEUR_BATTERIE, HIGH);
         one_pass = false;
       }
+      /********************** Asservissement en vitesse */
+      // // Lecture des ticks des encodeurs
+      val_tick_gauche = encodergauche.getCount();
+      val_tick_droite = encoderdroite.getCount();
+      // Je sais qu'en 1 tour je x tic, donc je convertis le nombre de tic pour avoir des tours
+      distance_gauche_parcourue = val_tick_gauche * 1.0 / TIC_UN_TOUR;
+      distance_droite_parcourue = val_tick_droite * 1.0 / TIC_UN_TOUR;
+      // Conversion en radians
+      theta_encodeur_gauche = 2.0 * M_PI * distance_gauche_parcourue / 1.0;
+      theta_encodeur_droite = 2.0 * M_PI * distance_droite_parcourue / 1.0;
+
+      theta_encodeur_moyenne = (theta_encodeur_gauche + theta_encodeur_droite) / 2.0;
+
+      vitesse_angulaire = (theta_encodeur_moyenne - theta_encodeur_moyenne_prec) / (Te / 1000.0); // rad/s
+
+      theta_encodeur_moyenne_prec = theta_encodeur_moyenne;
+
+      vitesse_angulaire_filtrer = (vitesse_angulaire + vitesse_angulaire_filter_prec * Tau_vitesse / Te) / (1 + Tau_vitesse / Te);
+
+      vitesse_angulaire_filter_prec = vitesse_angulaire_filtrer;
+
+      erreur_vit_angulaire = cons_vitesse_angulaire - vitesse_angulaire_filtrer;
+
+      commande_vitesse_angulaire = 1.0 * erreur_vit_angulaire * Kp_vitesse + 1.0 * Kd_vitesse * (erreur_vit_angulaire - erreur_vit_angulaire_prec) / Te;
+      erreur_vit_angulaire_prec = erreur_vit_angulaire;
+
+      /********************** Calcul du Theta */
       mpu.getEvent(&a, &g, &temp);
       xSemaphoreGive(i2cMutex); // Libérer le mutex
       z = a.acceleration.z;
       y = a.acceleration.y;
       x = a.acceleration.x;
       angle = degrees(atan2(y, z));
-
+      /********************** Calcul du Theta */
       // Calcul de théta a l'aide de l'accélération mesurer
       thetaG = atan2(y, z); // Permet de calculer l'angle Théta G avec un angle dans la valeur est entier relatif
       // Calcul du Théta filtrer
@@ -125,35 +185,37 @@ void controle(void *parameters)
 
       // Calcule de la somme permettant d'avoir un passe bande filtrer
       theta = thetaGF + thetaWF;
-      erreur_pos_ang = (cons + cons_equilibre) - theta;
-      float proportionnel = erreur_pos_ang * Kp_position;
-      float derivee = Kd_position * 1 * g.gyro.x;
+      /********************** Asservissement en position */
+      erreur_pos_ang = (commande_vitesse_angulaire + cons_equilibre) - theta;
+
+      float proportionnel_position_angulaire = erreur_pos_ang * Kp_position;
+      float derivee_position_angulaire = Kd_position * 1 * g.gyro.x;
 
       somme_integral_postion += erreur_pos_ang * Te;
-      if (somme_integral_postion > integral_limite_position)
+      if (somme_integral_postion > integral_limite_position_angulaire)
       {
-        somme_integral_postion = integral_limite_position;
+        somme_integral_postion = integral_limite_position_angulaire;
       }
-      else if (somme_integral_postion < -integral_limite_position)
+      else if (somme_integral_postion < -integral_limite_position_angulaire)
       {
-        somme_integral_postion = -integral_limite_position;
+        somme_integral_postion = -integral_limite_position_angulaire;
       }
 
       double integral = Ki_postion * somme_integral_postion;
 
-      commande = proportionnel + derivee + integral;
+      commande_position_angulaire = proportionnel_position_angulaire + derivee_position_angulaire + integral_limite_position_angulaire;
 
-      if (commande < 0)
+      if (commande_position_angulaire < 0)
       {
-        // commande = commande - frottement_moteur;
-        commande_gauche = commande - frottement_moteur_gauche;
-        commande_droite = commande - frottement_moteur_droite;
+        // commande_position_angulaire = commande_position_angulaire - frottement_moteur;
+        commande_gauche = commande_position_angulaire - frottement_moteur_gauche;
+        commande_droite = commande_position_angulaire - frottement_moteur_droite;
       }
-      else if (commande > 0)
+      else if (commande_position_angulaire > 0)
       {
-        // commande = commande + frottement_moteur;
-        commande_gauche = commande + frottement_moteur_gauche;
-        commande_droite = commande + frottement_moteur_droite;
+        // commande_position_angulaire = commande_position_angulaire + frottement_moteur;
+        commande_gauche = commande_position_angulaire + frottement_moteur_gauche;
+        commande_droite = commande_position_angulaire + frottement_moteur_droite;
       }
       commande_gauche = constrain(commande_gauche, -0.45, +0.45);
       commande_droite = constrain(commande_droite, -0.45, +0.45);
@@ -181,10 +243,6 @@ void controle(void *parameters)
     }
     // moteur_gauche((int)4095);
     // moteur_droite((int)4095);
-
-    // // Lecture des ticks des encodeurs
-    // val_tick_gauche = encodergauche.getCount();
-    // val_tick_droite = encoderdroite.getCount();
 
     FlagCalcul = true;
     vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(Te));
@@ -354,13 +412,15 @@ void loop()
       lcd.setCursor(0, 1);
       lcd.printf("D %d", (int)val_tick_droite);
       xSemaphoreGive(i2cMutex); // Libérer le mutex
+      Serial.print(angle);
+      Serial.printf(" ");
       Serial.print(erreur_pos_ang);
       Serial.printf(" ");
-      Serial.print(commande);
+      Serial.print(erreur_vit_angulaire);
       Serial.printf(" ");
-      Serial.print(commande_droite);
+      Serial.print(commande_vitesse_angulaire);
       Serial.printf(" ");
-      Serial.print(commande_gauche);
+      Serial.print(commande_position_angulaire);
       Serial.println();
     }
     FlagCalcul = false;
@@ -488,9 +548,24 @@ void reception(char ch)
 
     if (commande == "Fr_d")
     {
-      frottement_moteur_gauche = valeur.toDouble();
+      frottement_moteur_droite = valeur.toDouble();
     }
-
+    if (commande == "Kp_v")
+    {
+      Kp_vitesse = valeur.toDouble();
+    }
+    if (commande == "Kd_v")
+    {
+      Kd_vitesse = valeur.toDouble();
+    }
+    if (commande == "Ki_v")
+    {
+      Ki_vitesse = valeur.toDouble();
+    }
+    if (commande == "cons_v")
+    {
+      cons_vitesse_angulaire = valeur.toDouble();
+    }
     // if (commande == "consE")
     // {
     //   consE = valeur.toFloat();
